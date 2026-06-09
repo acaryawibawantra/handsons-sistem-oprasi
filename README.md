@@ -12,7 +12,7 @@ Repository ini berisi kumpulan laporan dan jawaban Hands-On praktikum Sistem Ope
 
 | No | Topik | Folder | Jumlah Lab |
 |----|-------|--------|------------|
-| 3 | Process Lifecycle | [Handson-3](./Handson-3) | 5 task |
+| 3 | Process Lifecycle | [Handson-3](./hands-on-3-Process-Lifecycle.md) | 5 task |
 | 4 | Threads and Concurrency (Bash & C) | [Handson-4](./Handson-4) | 10 lab |
 | 5 | Mutex and Threads | [Handson-5](./Handson-5) | 11 lab |
 | 6 | Deadlock and Starvation | [Handson-6](./Handson-6) | 5 lab |
