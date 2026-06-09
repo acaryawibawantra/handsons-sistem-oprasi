@@ -1,4 +1,4 @@
-# Hands-On 5: Deadlock and Starvation
+# Hands-On 5: Mutex and Threads
 
 **Nama:** I Dewa Nyoman Acarya Wibawantra
 **NRP:** 5025251222
@@ -6,24 +6,98 @@
 
 ---
 
-## Lab 1 - Thread Concurrency and Resource Competition
+## Lab 1 - Creating Multiple Threads and Observing Concurrent Execution
 
 ### Tujuan
-Mengamati eksekusi konkuren dua thread yang bersaing menggunakan resource (CPU, terminal) secara bersamaan, serta memahami bahwa tanpa sinkronisasi, urutan eksekusi bersifat nondeterministik.
+Memahami konsep thread sebagai unit eksekusi independen di dalam satu proses, serta mengamati bahwa beberapa thread dapat berjalan secara bersamaan (concurrent) dengan urutan output yang tidak selalu sama.
 
-### Script - `lab1.c`
+### Script - `lab1_basic_threads.c`
 
 ```c
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
 
-void* task(void* arg) {
+void* worker(void* arg) {
     int id = *(int*)arg;
 
-    for (int i = 0; i < 5; i++) {
-        printf("Thread %d is running iteration %d\n", id, i);
-        sleep(1);
+    for (int i = 1; i <= 5; i++) {
+        printf("Thread %d is running: step %d\n", id, i);
+        usleep(100000);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[3];
+    int ids[3] = {1, 2, 3};
+
+    for (int i = 0; i < 3; i++) {
+        pthread_create(&threads[i], NULL, worker, &ids[i]);
+    }
+
+    for (int i = 0; i < 3; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    printf("All threads have finished.\n");
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab1_basic_threads.c -o lab1_basic_threads -pthread
+./lab1_basic_threads
+```
+
+### Hasil Eksekusi
+
+```
+Thread 1 is running: step 1
+Thread 3 is running: step 1
+Thread 2 is running: step 1
+Thread 1 is running: step 2
+Thread 2 is running: step 2
+Thread 3 is running: step 2
+Thread 1 is running: step 3
+Thread 3 is running: step 3
+Thread 2 is running: step 3
+Thread 1 is running: step 4
+Thread 2 is running: step 4
+Thread 3 is running: step 4
+Thread 1 is running: step 5
+Thread 3 is running: step 5
+Thread 2 is running: step 5
+All threads have finished.
+```
+
+### Analisis
+
+Output dari ketiga thread saling bercampur (interleaved) karena OS menjadwalkan thread secara independen. Urutan bisa berbeda setiap kali dijalankan — ini menunjukkan sifat nondeterministik dari concurrency. Semua thread berada dalam satu proses yang sama, berbagi address space, tapi masing-masing punya alur eksekusi sendiri. `usleep(100000)` memberikan jeda 100ms agar interleaving lebih terlihat jelas di terminal.
+
+---
+
+## Lab 2 - Race Condition on Shared Data
+
+### Tujuan
+Mendemonstrasikan race condition ketika dua thread meng-increment variabel global yang sama tanpa sinkronisasi.
+
+### Script - `lab2_race_condition.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+
+#define ITERATIONS 1000000
+
+int counter = 0;
+
+void* increment_counter(void* arg) {
+    for (int i = 0; i < ITERATIONS; i++) {
+        counter++;
     }
 
     return NULL;
@@ -31,14 +105,15 @@ void* task(void* arg) {
 
 int main() {
     pthread_t t1, t2;
-    int id1 = 1, id2 = 2;
 
-    pthread_create(&t1, NULL, task, &id1);
-    pthread_create(&t2, NULL, task, &id2);
+    pthread_create(&t1, NULL, increment_counter, NULL);
+    pthread_create(&t2, NULL, increment_counter, NULL);
 
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);
 
+    printf("Expected counter value: %d\n", ITERATIONS * 2);
+    printf("Actual counter value  : %d\n", counter);
     return 0;
 }
 ```
@@ -46,83 +121,73 @@ int main() {
 ### Cara Menjalankan
 
 ```bash
-gcc lab1.c -o lab1 -pthread
-./lab1
+gcc lab2_race_condition.c -o lab2_race_condition -pthread
+./lab2_race_condition
 ```
 
-### Hasil Eksekusi
+### Hasil Eksekusi (3x percobaan)
 
 ```
-Thread 1 is running iteration 0
-Thread 2 is running iteration 0
-Thread 2 is running iteration 1
-Thread 1 is running iteration 1
-Thread 1 is running iteration 2
-Thread 2 is running iteration 2
-Thread 2 is running iteration 3
-Thread 1 is running iteration 3
-Thread 1 is running iteration 4
-Thread 2 is running iteration 4
+$ ./lab2_race_condition
+Expected counter value: 2000000
+Actual counter value  : 1487263
+
+$ ./lab2_race_condition
+Expected counter value: 2000000
+Actual counter value  : 1352891
+
+$ ./lab2_race_condition
+Expected counter value: 2000000
+Actual counter value  : 1591044
 ```
 
 ### Analisis
 
-Output kedua thread saling bercampur dan urutannya berubah-ubah setiap kali dijalankan. Ini terjadi karena thread scheduler di OS memutuskan kapan setiap thread mendapat giliran CPU — programmer tidak bisa mengontrol urutan ini tanpa mekanisme sinkronisasi. Meskipun belum ada error di lab ini, interleaving yang tidak terprediksi inilah yang menjadi akar masalah race condition dan deadlock di lab-lab berikutnya. Kedua thread bersaing untuk resource yang sama (stdout/terminal), yang merupakan contoh sederhana dari resource competition.
+Hasil selalu di bawah 2000000 dan berubah-ubah setiap eksekusi. Ini karena `counter++` bukan operasi atomik — secara internal terdiri dari read, add, dan write. Ketika dua thread membaca nilai yang sama sebelum salah satu menulis, satu increment hilang (lost update). Dengan 1 juta iterasi per thread, peluang overlap sangat tinggi. Ini membuktikan bahwa shared memory tanpa proteksi menghasilkan data yang tidak konsisten.
 
 ---
 
-## Lab 2 - Simulating Deadlock with Threads
+## Lab 3 - Solving the Race Condition with Mutual Exclusion
 
 ### Tujuan
-Mendemonstrasikan deadlock — kondisi di mana dua thread saling menunggu resource yang dipegang oleh thread lain, sehingga keduanya terhenti selamanya.
+Memperbaiki race condition dari Lab 2 menggunakan mutex untuk melindungi critical section.
 
-### Script - `lab2.c`
+### Script - `lab3_mutex_counter.c`
 
 ```c
 #include <stdio.h>
 #include <pthread.h>
-#include <unistd.h>
 
-pthread_mutex_t A, B;
+#define ITERATIONS 1000000
 
-void* thread1(void* arg) {
-    pthread_mutex_lock(&A);
-    printf("Thread 1 locked A\n");
-    sleep(1);
+int counter = 0;
+pthread_mutex_t lock;
 
-    pthread_mutex_lock(&B);
-    printf("Thread 1 locked B\n");
+void* increment_counter(void* arg) {
+    for (int i = 0; i < ITERATIONS; i++) {
+        pthread_mutex_lock(&lock);
+        counter++;
+        pthread_mutex_unlock(&lock);
+    }
 
-    pthread_mutex_unlock(&B);
-    pthread_mutex_unlock(&A);
-    return NULL;
-}
-
-void* thread2(void* arg) {
-    pthread_mutex_lock(&B);
-    printf("Thread 2 locked B\n");
-    sleep(1);
-
-    pthread_mutex_lock(&A);
-    printf("Thread 2 locked A\n");
-
-    pthread_mutex_unlock(&A);
-    pthread_mutex_unlock(&B);
     return NULL;
 }
 
 int main() {
     pthread_t t1, t2;
 
-    pthread_mutex_init(&A, NULL);
-    pthread_mutex_init(&B, NULL);
+    pthread_mutex_init(&lock, NULL);
 
-    pthread_create(&t1, NULL, thread1, NULL);
-    pthread_create(&t2, NULL, thread2, NULL);
+    pthread_create(&t1, NULL, increment_counter, NULL);
+    pthread_create(&t2, NULL, increment_counter, NULL);
 
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);
 
+    pthread_mutex_destroy(&lock);
+
+    printf("Expected counter value: %d\n", ITERATIONS * 2);
+    printf("Actual counter value  : %d\n", counter);
     return 0;
 }
 ```
@@ -130,135 +195,29 @@ int main() {
 ### Cara Menjalankan
 
 ```bash
-gcc lab2.c -o lab2 -pthread
-./lab2
+gcc lab3_mutex_counter.c -o lab3_mutex_counter -pthread
+./lab3_mutex_counter
 ```
 
 ### Hasil Eksekusi
 
 ```
-Thread 1 locked A
-Thread 2 locked B
-(program hangs - tidak ada output lagi, harus di-kill dengan Ctrl+C)
+Expected counter value: 2000000
+Actual counter value  : 2000000
 ```
 
 ### Analisis
 
-Program membeku setelah kedua thread masing-masing mengunci satu mutex. Thread 1 memegang A dan menunggu B, sementara Thread 2 memegang B dan menunggu A — ini adalah **circular wait**, salah satu dari empat syarat terjadinya deadlock (Coffman conditions):
-
-1. **Mutual Exclusion** — mutex hanya bisa dipegang satu thread
-2. **Hold and Wait** — thread memegang satu resource sambil menunggu yang lain
-3. **No Preemption** — resource tidak bisa diambil paksa dari thread yang memegangnya
-4. **Circular Wait** — Thread 1 → tunggu B (dipegang Thread 2) → tunggu A (dipegang Thread 1)
-
-Keempat kondisi terpenuhi secara bersamaan, sehingga deadlock terjadi. `sleep(1)` sengaja ditambahkan agar kedua thread sempat mengunci mutex pertama sebelum mencoba mengunci mutex kedua, memperbesar peluang deadlock terjadi.
+Dengan mutex, hasilnya selalu tepat 2000000. `pthread_mutex_lock` memastikan hanya satu thread yang bisa mengeksekusi `counter++` dalam satu waktu — thread lain harus menunggu sampai lock dilepas. Ini menunjukkan prinsip mutual exclusion: critical section terlindungi dari akses bersamaan. Perlu dicatat bahwa sinkronisasi menambah overhead — program berjalan sedikit lebih lambat karena thread harus bergantian di critical section.
 
 ---
 
-## Lab 3 - Deadlock Prevention via Resource Ordering
+## Lab 4 - Producer-Consumer Using Semaphore Synchronization
 
 ### Tujuan
-Mencegah deadlock dengan mengeliminasi kondisi circular wait — kedua thread mengakuisisi resource dalam urutan yang sama (A dulu, baru B).
+Mengimplementasikan pola producer-consumer menggunakan semaphore untuk koordinasi urutan eksekusi dan mutex untuk proteksi buffer.
 
-### Script - `lab3.c`
-
-```c
-#include <stdio.h>
-#include <pthread.h>
-#include <unistd.h>
-
-pthread_mutex_t A, B;
-
-void* safe_thread(void* arg) {
-    int id = *(int*)arg;
-
-    printf("Thread %d wants resource A\n", id);
-    pthread_mutex_lock(&A);
-    printf("Thread %d locked resource A\n", id);
-
-    sleep(1);
-
-    printf("Thread %d wants resource B\n", id);
-    pthread_mutex_lock(&B);
-    printf("Thread %d locked resource B\n", id);
-
-    printf("Thread %d is using both resources safely\n", id);
-    sleep(1);
-
-    pthread_mutex_unlock(&B);
-    printf("Thread %d released resource B\n", id);
-
-    pthread_mutex_unlock(&A);
-    printf("Thread %d released resource A\n", id);
-
-    return NULL;
-}
-
-int main() {
-    pthread_t t1, t2;
-    int id1 = 1, id2 = 2;
-
-    pthread_mutex_init(&A, NULL);
-    pthread_mutex_init(&B, NULL);
-
-    pthread_create(&t1, NULL, safe_thread, &id1);
-    pthread_create(&t2, NULL, safe_thread, &id2);
-
-    pthread_join(t1, NULL);
-    pthread_join(t2, NULL);
-
-    pthread_mutex_destroy(&A);
-    pthread_mutex_destroy(&B);
-
-    return 0;
-}
-```
-
-### Cara Menjalankan
-
-```bash
-gcc lab3.c -o lab3 -pthread
-./lab3
-```
-
-### Hasil Eksekusi
-
-```
-Thread 1 wants resource A
-Thread 1 locked resource A
-Thread 2 wants resource A
-Thread 1 wants resource B
-Thread 1 locked resource B
-Thread 1 is using both resources safely
-Thread 1 released resource B
-Thread 1 released resource A
-Thread 2 locked resource A
-Thread 2 wants resource B
-Thread 2 locked resource B
-Thread 2 is using both resources safely
-Thread 2 released resource B
-Thread 2 released resource A
-```
-
-### Analisis
-
-Program berjalan sampai selesai tanpa deadlock. Kuncinya: kedua thread mengakuisisi resource dalam **urutan yang sama** — selalu A dulu, baru B. Dengan demikian, circular wait tidak mungkin terjadi:
-
-- Thread 1 mengunci A terlebih dahulu
-- Thread 2 juga mencoba mengunci A, tapi harus menunggu karena A sudah dipegang Thread 1
-- Thread 1 bebas mengunci B tanpa hambatan, menyelesaikan tugasnya, lalu melepaskan keduanya
-- Thread 2 baru bisa melanjutkan setelah Thread 1 selesai
-
-Ini adalah teknik **deadlock prevention** yang paling praktis dan sering digunakan di sistem nyata — database system, file locking, dan kernel OS. Trade-off-nya: eksekusi menjadi lebih sequential (Thread 2 harus menunggu Thread 1 selesai sepenuhnya), tapi correctness terjamin.
-
----
-
-## Lab 4 - Dining Philosophers with Semaphores
-
-### Tujuan
-Mengimplementasikan Dining Philosophers Problem — masalah klasik sinkronisasi di mana 5 philosopher bersaing untuk menggunakan 5 fork yang dibagi bersama.
-
-### Script - `lab4.c`
+### Script - `lab4_producer_consumer.c`
 
 ```c
 #include <stdio.h>
@@ -266,145 +225,51 @@ Mengimplementasikan Dining Philosophers Problem — masalah klasik sinkronisasi 
 #include <semaphore.h>
 #include <unistd.h>
 
-#define N 5
+#define ITEMS 10
 
-sem_t forks[N];
-
-void* philosopher(void* num) {
-    int i = *(int*)num;
-
-    while (1) {
-        printf("Philosopher %d thinking\n", i);
-        sleep(1);
-
-        sem_wait(&forks[i]);
-        sem_wait(&forks[(i + 1) % N]);
-
-        printf("Philosopher %d eating\n", i);
-        sleep(1);
-
-        sem_post(&forks[i]);
-        sem_post(&forks[(i + 1) % N]);
-    }
-}
-
-int main() {
-    pthread_t p[N];
-    int ids[N];
-
-    for (int i = 0; i < N; i++) {
-        sem_init(&forks[i], 0, 1);
-    }
-
-    for (int i = 0; i < N; i++) {
-        ids[i] = i;
-        pthread_create(&p[i], NULL, philosopher, &ids[i]);
-    }
-
-    for (int i = 0; i < N; i++) {
-        pthread_join(p[i], NULL);
-    }
-}
-```
-
-### Cara Menjalankan
-
-```bash
-gcc lab4.c -o lab4 -pthread
-./lab4
-```
-
-(Hentikan dengan `Ctrl+C` karena program berjalan infinite loop)
-
-### Hasil Eksekusi
-
-```
-Philosopher 0 thinking
-Philosopher 1 thinking
-Philosopher 2 thinking
-Philosopher 3 thinking
-Philosopher 4 thinking
-Philosopher 0 eating
-Philosopher 2 eating
-Philosopher 0 thinking
-Philosopher 3 eating
-Philosopher 2 thinking
-Philosopher 1 eating
-...
-(program bisa mengalami deadlock setelah beberapa iterasi)
-```
-
-### Analisis
-
-Program ini rentan terhadap **deadlock**. Skenario terburuk: semua 5 philosopher mengambil fork kiri secara bersamaan (`sem_wait(&forks[i])`), lalu semua menunggu fork kanan (`sem_wait(&forks[(i+1)%N])`) yang sudah dipegang philosopher sebelahnya — circular wait terbentuk dan semua terhenti.
-
-Dalam beberapa eksekusi, program mungkin berjalan cukup lama sebelum deadlock terjadi karena timing `sleep(1)` memberikan jeda. Tapi secara teori, deadlock pasti bisa terjadi.
-
-Solusi yang mungkin (tidak diimplementasikan di lab ini):
-- **Resource ordering**: philosopher terakhir mengambil fork dalam urutan terbalik
-- **Limiting concurrency**: membatasi maksimal 4 philosopher yang boleh duduk bersamaan
-- **Chandy/Misra solution**: menggunakan token-based approach
-
-Masalah Dining Philosophers adalah contoh klasik yang menunjukkan betapa sulitnya mendesain sistem concurrent yang bebas deadlock dan starvation secara bersamaan.
-
----
-
-## Lab 5 - Blocking Synchronization using Semaphores (Producer-Consumer)
-
-### Tujuan
-Mengimplementasikan bounded-buffer producer-consumer menggunakan semaphore, menunjukkan blocking synchronization yang efisien (thread menunggu tanpa membuang CPU).
-
-### Script - `lab5.c`
-
-```c
-#include <stdio.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include <unistd.h>
-
-#define SIZE 5
-
-int buffer[SIZE];
-int count = 0;
-
-sem_t empty, full, mutex;
+int buffer;
+sem_t empty;
+sem_t full;
+pthread_mutex_t lock;
 
 void* producer(void* arg) {
-    while (1) {
-        sleep(1);
-
+    for (int item = 1; item <= ITEMS; item++) {
         sem_wait(&empty);
-        sem_wait(&mutex);
 
-        buffer[count++] = 1;
-        printf("Produced, count = %d\n", count);
+        pthread_mutex_lock(&lock);
+        buffer = item;
+        printf("Producer produced item %d\n", item);
+        pthread_mutex_unlock(&lock);
 
-        sem_post(&mutex);
         sem_post(&full);
+        sleep(1);
     }
+
+    return NULL;
 }
 
 void* consumer(void* arg) {
-    while (1) {
-        sleep(2);
-
+    for (int i = 1; i <= ITEMS; i++) {
         sem_wait(&full);
-        sem_wait(&mutex);
 
-        buffer[--count] = 0;
-        printf("Consumed, count = %d\n", count);
+        pthread_mutex_lock(&lock);
+        int item = buffer;
+        printf("Consumer consumed item %d\n", item);
+        pthread_mutex_unlock(&lock);
 
-        sem_post(&mutex);
         sem_post(&empty);
+        sleep(1);
     }
+
+    return NULL;
 }
 
 int main() {
     pthread_t prod, cons;
 
-    sem_init(&empty, 0, SIZE);
+    sem_init(&empty, 0, 1);
     sem_init(&full, 0, 0);
-    sem_init(&mutex, 0, 1);
+    pthread_mutex_init(&lock, NULL);
 
     pthread_create(&prod, NULL, producer, NULL);
     pthread_create(&cons, NULL, consumer, NULL);
@@ -414,7 +279,110 @@ int main() {
 
     sem_destroy(&empty);
     sem_destroy(&full);
-    sem_destroy(&mutex);
+    pthread_mutex_destroy(&lock);
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab4_producer_consumer.c -o lab4_producer_consumer -pthread
+./lab4_producer_consumer
+```
+
+### Hasil Eksekusi
+
+```
+Producer produced item 1
+Consumer consumed item 1
+Producer produced item 2
+Consumer consumed item 2
+Producer produced item 3
+Consumer consumed item 3
+Producer produced item 4
+Consumer consumed item 4
+Producer produced item 5
+Consumer consumed item 5
+Producer produced item 6
+Consumer consumed item 6
+Producer produced item 7
+Consumer consumed item 7
+Producer produced item 8
+Consumer consumed item 8
+Producer produced item 9
+Consumer consumed item 9
+Producer produced item 10
+Consumer consumed item 10
+```
+
+### Analisis
+
+Setiap item diproduksi lalu dikonsumsi secara bergantian — tidak ada data yang hilang atau di-overwrite. Semaphore `empty` (init=1) memastikan producer hanya bisa produce saat buffer kosong, sedangkan `full` (init=0) memastikan consumer hanya bisa consume saat buffer terisi. Mutex melindungi akses ke variabel `buffer`. Kombinasi semaphore + mutex ini menunjukkan dua peran sinkronisasi yang berbeda: semaphore mengatur ordering/blocking, sedangkan mutex mengatur mutual exclusion.
+
+---
+
+## Lab 5 - Blocking and Unblocking Threads with Condition Variables
+
+### Tujuan
+Mendemonstrasikan mekanisme blocking yang efisien menggunakan condition variable, di mana thread menunggu tanpa membuang CPU (berbeda dari busy waiting).
+
+### Script - `lab5_blocking_condition.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+
+int data_ready = 0;
+int shared_data = 0;
+
+pthread_mutex_t lock;
+pthread_cond_t condition;
+
+void* worker(void* arg) {
+    pthread_mutex_lock(&lock);
+
+    while (!data_ready) {
+        printf("Worker: data is not ready, blocking now...\n");
+        pthread_cond_wait(&condition, &lock);
+    }
+
+    printf("Worker: awakened, received shared data = %d\n", shared_data);
+
+    pthread_mutex_unlock(&lock);
+    return NULL;
+}
+
+void* controller(void* arg) {
+    sleep(3);
+
+    pthread_mutex_lock(&lock);
+
+    shared_data = 42;
+    data_ready = 1;
+    printf("Controller: data prepared, signaling worker...\n");
+
+    pthread_cond_signal(&condition);
+
+    pthread_mutex_unlock(&lock);
+    return NULL;
+}
+
+int main() {
+    pthread_t t_worker, t_controller;
+
+    pthread_mutex_init(&lock, NULL);
+    pthread_cond_init(&condition, NULL);
+
+    pthread_create(&t_worker, NULL, worker, NULL);
+    pthread_create(&t_controller, NULL, controller, NULL);
+
+    pthread_join(t_worker, NULL);
+    pthread_join(t_controller, NULL);
+
+    pthread_cond_destroy(&condition);
+    pthread_mutex_destroy(&lock);
 
     return 0;
 }
@@ -423,42 +391,502 @@ int main() {
 ### Cara Menjalankan
 
 ```bash
-gcc lab5.c -o lab5 -pthread
-./lab5
+gcc lab5_blocking_condition.c -o lab5_blocking_condition -pthread
+./lab5_blocking_condition
 ```
-
-(Hentikan dengan `Ctrl+C`)
 
 ### Hasil Eksekusi
 
 ```
-Produced, count = 1
-Produced, count = 2
-Consumed, count = 1
-Produced, count = 2
-Produced, count = 3
-Consumed, count = 2
-Produced, count = 3
-Produced, count = 4
-Consumed, count = 3
-Produced, count = 4
-Produced, count = 5
-Consumed, count = 4
-Produced, count = 5
-Consumed, count = 4
-...
+Worker: data is not ready, blocking now...
+Controller: data prepared, signaling worker...
+Worker: awakened, received shared data = 42
 ```
 
 ### Analisis
 
-Producer menghasilkan item setiap 1 detik, consumer mengambil setiap 2 detik — sehingga buffer perlahan terisi. Ketika buffer penuh (count=5), `sem_wait(&empty)` mem-block producer sampai consumer mengambil item. Sebaliknya, ketika buffer kosong, `sem_wait(&full)` mem-block consumer.
+Worker langsung masuk ke kondisi blocking saat `data_ready` masih 0. Selama 3 detik, worker tidak melakukan apa-apa (tidak membuang CPU). Setelah controller menyiapkan data dan memanggil `pthread_cond_signal`, worker terbangun dan membaca `shared_data = 42`. Penggunaan `while (!data_ready)` (bukan `if`) penting untuk menghindari spurious wakeup — kondisi dimana thread terbangun tanpa signal yang valid. Pendekatan ini jauh lebih efisien dibanding busy-waiting karena thread yang di-block tidak mengonsumsi waktu CPU.
 
-Tiga semaphore memiliki peran berbeda:
-- **`empty`** (init=SIZE): melacak slot kosong di buffer — producer harus menunggu jika 0
-- **`full`** (init=0): melacak item tersedia — consumer harus menunggu jika 0
-- **`mutex`** (init=1): melindungi akses ke variabel `count` dan array `buffer`
+---
 
-Keunggulan blocking dibanding busy-waiting: thread yang menunggu tidak mengonsumsi CPU karena OS men-suspend thread tersebut dan membangunkannya hanya ketika semaphore di-signal. Ini jauh lebih efisien untuk sistem dengan banyak thread.
+## Lab 6 - Implementing a Critical Section with Threads (Bank Account)
+
+### Tujuan
+Mengidentifikasi dan mengimplementasikan critical section pada kasus nyata: 5 thread melakukan deposit ke satu rekening bank yang sama.
+
+### Script - `critical_section_bank.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+
+#define THREADS 5
+#define DEPOSITS_PER_THREAD 3
+#define DEPOSIT_AMOUNT 100
+
+int balance = 0;
+pthread_mutex_t balance_lock;
+
+void* deposit_money(void* arg) {
+    int thread_id = *(int*)arg;
+
+    for (int i = 1; i <= DEPOSITS_PER_THREAD; i++) {
+        pthread_mutex_lock(&balance_lock);
+
+        int old_balance = balance;
+        printf("Thread %d reads balance: %d\n", thread_id, old_balance);
+
+        sleep(1);
+
+        balance = old_balance + DEPOSIT_AMOUNT;
+        printf("Thread %d updates balance to: %d\n", thread_id, balance);
+
+        pthread_mutex_unlock(&balance_lock);
+
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[THREADS];
+    int ids[THREADS];
+
+    pthread_mutex_init(&balance_lock, NULL);
+
+    for (int i = 0; i < THREADS; i++) {
+        ids[i] = i + 1;
+        pthread_create(&threads[i], NULL, deposit_money, &ids[i]);
+    }
+
+    for (int i = 0; i < THREADS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    pthread_mutex_destroy(&balance_lock);
+
+    printf("\nFinal balance: %d\n", balance);
+    printf("Expected balance: %d\n",
+           THREADS * DEPOSITS_PER_THREAD * DEPOSIT_AMOUNT);
+
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc critical_section_bank.c -o critical_section_bank -pthread
+./critical_section_bank
+```
+
+### Hasil Eksekusi (ringkasan)
+
+```
+Thread 1 reads balance: 0
+Thread 1 updates balance to: 100
+Thread 3 reads balance: 100
+Thread 3 updates balance to: 200
+Thread 2 reads balance: 200
+Thread 2 updates balance to: 300
+...
+Thread 5 reads balance: 1400
+Thread 5 updates balance to: 1500
+
+Final balance: 1500
+Expected balance: 1500
+```
+
+### Analisis
+
+Hasil akhir selalu 1500 (5 thread × 3 deposit × 100). Mutex memastikan hanya satu thread yang bisa membaca dan mengupdate balance pada satu waktu. `sleep(1)` di dalam critical section sengaja ditambahkan agar window of vulnerability lebih terlihat — tanpa mutex, thread lain bisa membaca `old_balance` yang sudah stale selama jeda ini. Ini menggambarkan kasus dunia nyata seperti dua transaksi ATM yang mengakses saldo bersamaan.
+
+---
+
+## Lab 7 - Observing a Race Condition
+
+### Tujuan
+Mengamati efek race condition pada counter yang di-increment oleh dua thread tanpa proteksi.
+
+### Script - `lab1_race.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+
+#define ITER 1000000
+
+int counter = 0;
+
+void* increment(void* arg) {
+    for (int i = 0; i < ITER; i++) {
+        counter++;
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+
+    pthread_create(&t1, NULL, increment, NULL);
+    pthread_create(&t2, NULL, increment, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    printf("Expected: %d\n", ITER * 2);
+    printf("Actual  : %d\n", counter);
+
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab1_race.c -o lab1_race -pthread
+./lab1_race
+```
+
+### Hasil Eksekusi (3x percobaan)
+
+```
+$ ./lab1_race
+Expected: 2000000
+Actual  : 1283746
+
+$ ./lab1_race
+Expected: 2000000
+Actual  : 1456231
+
+$ ./lab1_race
+Expected: 2000000
+Actual  : 1178503
+```
+
+### Analisis
+
+Sama dengan Lab 2 — hasilnya tidak pernah mencapai 2000000 karena `counter++` bukan operasi atomik. Lab ini memperkuat pemahaman bahwa race condition bukan masalah sintaks, melainkan masalah timing. Program terlihat benar dari perspektif satu thread, tapi ketika dijalankan secara concurrent, hasilnya menjadi unpredictable. Perbedaan nilai antar eksekusi menunjukkan bahwa race condition sangat bergantung pada scheduling OS.
+
+---
+
+## Lab 8 - Implementing Mutual Exclusion with Mutex
+
+### Tujuan
+Mengeliminasi race condition dari Lab 7 dengan menambahkan mutex lock.
+
+### Script - `lab2_mutex.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+
+#define ITER 1000000
+
+int counter = 0;
+pthread_mutex_t lock;
+
+void* increment(void* arg) {
+    for (int i = 0; i < ITER; i++) {
+        pthread_mutex_lock(&lock);
+        counter++;
+        pthread_mutex_unlock(&lock);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+
+    pthread_mutex_init(&lock, NULL);
+
+    pthread_create(&t1, NULL, increment, NULL);
+    pthread_create(&t2, NULL, increment, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    pthread_mutex_destroy(&lock);
+
+    printf("Expected: %d\n", ITER * 2);
+    printf("Actual  : %d\n", counter);
+
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab2_mutex.c -o lab2_mutex -pthread
+./lab2_mutex
+```
+
+### Hasil Eksekusi
+
+```
+Expected: 2000000
+Actual  : 2000000
+```
+
+### Analisis
+
+Dengan mutex, hasil selalu konsisten 2000000. Ini mengonfirmasi bahwa mutual exclusion menyelesaikan race condition. Thread yang gagal mendapat lock akan di-block oleh OS sampai lock tersedia — ini lebih efisien daripada busy waiting. Trade-off-nya terlihat pada waktu eksekusi yang lebih lambat karena critical section hanya bisa diakses satu thread dalam satu waktu.
+
+---
+
+## Lab 9 - Semaphore-Based Mutual Exclusion
+
+### Tujuan
+Mengimplementasikan mutual exclusion menggunakan semaphore sebagai alternatif dari mutex.
+
+### Script - `lab3_semaphore.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+#define ITER 1000000
+
+int counter = 0;
+sem_t sem;
+
+void* increment(void* arg) {
+    for (int i = 0; i < ITER; i++) {
+        sem_wait(&sem);
+        counter++;
+        sem_post(&sem);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t t1, t2;
+
+    sem_init(&sem, 0, 1);
+
+    pthread_create(&t1, NULL, increment, NULL);
+    pthread_create(&t2, NULL, increment, NULL);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    sem_destroy(&sem);
+
+    printf("Expected: %d\n", ITER * 2);
+    printf("Actual  : %d\n", counter);
+
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab3_semaphore.c -o lab3_semaphore -pthread
+./lab3_semaphore
+```
+
+### Hasil Eksekusi
+
+```
+Expected: 2000000
+Actual  : 2000000
+```
+
+### Analisis
+
+Binary semaphore (init=1) berperilaku seperti mutex — `sem_wait` menurunkan nilai semaphore dan mem-block jika nilainya 0, sedangkan `sem_post` menaikkan nilai dan membangunkan thread yang menunggu. Perbedaan utama dengan mutex: semaphore lebih general karena bisa diinisialisasi dengan nilai > 1 untuk mengizinkan beberapa thread masuk bersamaan, sedangkan mutex selalu eksklusif untuk satu thread. Dalam konteks ini keduanya menghasilkan hasil yang identik.
+
+---
+
+## Lab 10 - Producer-Consumer Synchronization
+
+### Tujuan
+Mengkoordinasikan dua thread dalam pola producer-consumer menggunakan semaphore dan mutex.
+
+### Script - `lab4_producer_consumer.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <unistd.h>
+
+int buffer;
+sem_t empty, full;
+pthread_mutex_t lock;
+
+void* producer(void* arg) {
+    for (int i = 1; i <= 5; i++) {
+        sem_wait(&empty);
+
+        pthread_mutex_lock(&lock);
+        buffer = i;
+        printf("Produced: %d\n", i);
+        pthread_mutex_unlock(&lock);
+
+        sem_post(&full);
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+void* consumer(void* arg) {
+    for (int i = 1; i <= 5; i++) {
+        sem_wait(&full);
+
+        pthread_mutex_lock(&lock);
+        printf("Consumed: %d\n", buffer);
+        pthread_mutex_unlock(&lock);
+
+        sem_post(&empty);
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+int main() {
+    pthread_t p, c;
+
+    sem_init(&empty, 0, 1);
+    sem_init(&full, 0, 0);
+    pthread_mutex_init(&lock, NULL);
+
+    pthread_create(&p, NULL, producer, NULL);
+    pthread_create(&c, NULL, consumer, NULL);
+
+    pthread_join(p, NULL);
+    pthread_join(c, NULL);
+
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab4_producer_consumer.c -o lab4_producer_consumer -pthread
+./lab4_producer_consumer
+```
+
+### Hasil Eksekusi
+
+```
+Produced: 1
+Consumed: 1
+Produced: 2
+Consumed: 2
+Produced: 3
+Consumed: 3
+Produced: 4
+Consumed: 4
+Produced: 5
+Consumed: 5
+```
+
+### Analisis
+
+Pola produksi dan konsumsi berjalan secara bergantian dan terurut — setiap item yang diproduksi langsung dikonsumsi sebelum item baru dibuat. Dengan buffer berukuran 1, semaphore `empty` dan `full` memastikan strict alternation. Consumer tidak bisa mengambil data sebelum producer mengisinya (dijaga oleh `sem_wait(&full)`), dan producer tidak bisa menimpa buffer sebelum consumer mengambilnya (dijaga oleh `sem_wait(&empty)`). Pola ini fondasi dari banyak sistem nyata: message queue, print spooler, dan data pipeline.
+
+---
+
+## Lab 11 - Readers-Writers Problem
+
+### Tujuan
+Mengimplementasikan skenario di mana beberapa reader bisa mengakses data secara bersamaan, tapi writer memerlukan akses eksklusif.
+
+### Script - `lab5_readers_writers.c`
+
+```c
+#include <stdio.h>
+#include <pthread.h>
+#include <unistd.h>
+
+int read_count = 0;
+pthread_mutex_t mutex;
+pthread_mutex_t write_lock;
+
+void* reader(void* arg) {
+    pthread_mutex_lock(&mutex);
+    read_count++;
+
+    if (read_count == 1) {
+        pthread_mutex_lock(&write_lock);
+    }
+
+    pthread_mutex_unlock(&mutex);
+
+    printf("Reader reading\n");
+    sleep(1);
+
+    pthread_mutex_lock(&mutex);
+    read_count--;
+
+    if (read_count == 0) {
+        pthread_mutex_unlock(&write_lock);
+    }
+
+    pthread_mutex_unlock(&mutex);
+
+    return NULL;
+}
+
+void* writer(void* arg) {
+    pthread_mutex_lock(&write_lock);
+
+    printf("Writer writing\n");
+    sleep(2);
+
+    pthread_mutex_unlock(&write_lock);
+
+    return NULL;
+}
+
+int main() {
+    pthread_t r1, r2, w1;
+
+    pthread_mutex_init(&mutex, NULL);
+    pthread_mutex_init(&write_lock, NULL);
+
+    pthread_create(&r1, NULL, reader, NULL);
+    pthread_create(&r2, NULL, reader, NULL);
+    pthread_create(&w1, NULL, writer, NULL);
+
+    pthread_join(r1, NULL);
+    pthread_join(r2, NULL);
+    pthread_join(w1, NULL);
+
+    return 0;
+}
+```
+
+### Cara Menjalankan
+
+```bash
+gcc lab5_readers_writers.c -o lab5_readers_writers -pthread
+./lab5_readers_writers
+```
+
+### Hasil Eksekusi
+
+```
+Reader reading
+Reader reading
+Writer writing
+```
+
+### Analisis
+
+Kedua reader bisa membaca secara bersamaan (muncul hampir serentak), tapi writer harus menunggu sampai semua reader selesai. Mekanismenya: reader pertama yang masuk mengambil `write_lock` sehingga writer ter-block, reader-reader berikutnya cukup menaikkan `read_count` tanpa perlu mengambil `write_lock` lagi. Ketika reader terakhir keluar (`read_count == 0`), `write_lock` dilepas dan writer bisa masuk. Ini adalah implementasi "readers-preference" — reader diprioritaskan, yang bisa menyebabkan writer starvation jika reader terus datang tanpa henti.
 
 ---
 
@@ -466,10 +894,16 @@ Keunggulan blocking dibanding busy-waiting: thread yang menunggu tidak mengonsum
 
 | Lab | Topik | Pelajaran Utama |
 |-----|-------|-----------------|
-| 1 | Thread Concurrency | Eksekusi concurrent bersifat nondeterministik tanpa sinkronisasi |
-| 2 | Deadlock Simulation | Circular wait + hold-and-wait menyebabkan program membeku |
-| 3 | Deadlock Prevention | Resource ordering mengeliminasi circular wait |
-| 4 | Dining Philosophers | Masalah klasik yang menunjukkan sulitnya menghindari deadlock pada shared resources |
-| 5 | Producer-Consumer | Blocking synchronization dengan semaphore lebih efisien dari busy-waiting |
+| 1 | Multiple Threads | Thread berjalan concurrent, urutan output nondeterministik |
+| 2 | Race Condition | Shared variable tanpa proteksi menghasilkan data salah |
+| 3 | Mutex | Mutual exclusion mengembalikan correctness |
+| 4 | Producer-Consumer (Semaphore) | Semaphore mengatur ordering, mutex mengatur akses |
+| 5 | Condition Variable | Blocking efisien tanpa busy waiting |
+| 6 | Critical Section (Bank) | Identifikasi dan proteksi critical section pada kasus nyata |
+| 7 | Race Condition (ulang) | Memperkuat pemahaman tentang non-atomicity |
+| 8 | Mutex (ulang) | Konfirmasi bahwa mutex menyelesaikan race condition |
+| 9 | Semaphore Mutex | Binary semaphore sebagai alternatif mutex |
+| 10 | Producer-Consumer | Koordinasi strict alternation dengan buffer tunggal |
+| 11 | Readers-Writers | Multiple readers concurrent, writer eksklusif |
 
-Hands-on ini membangun pemahaman bertahap: dari mengamati concurrency dasar (Lab 1), mengalami deadlock secara langsung (Lab 2), belajar mencegahnya (Lab 3), melihat kompleksitasnya pada masalah klasik (Lab 4), hingga mengimplementasikan sinkronisasi yang efisien (Lab 5). Poin utama: deadlock terjadi ketika empat Coffman conditions terpenuhi bersamaan, dan cara paling praktis mencegahnya adalah mengeliminasi salah satu kondisi — biasanya circular wait melalui resource ordering.
+Intinya: thread memungkinkan concurrency yang efisien, tapi shared resource membutuhkan sinkronisasi (mutex, semaphore, condition variable) untuk menjaga correctness. Desain yang baik meminimalkan ukuran critical section agar concurrency tetap optimal.
