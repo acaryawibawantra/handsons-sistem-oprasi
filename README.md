@@ -27,8 +27,3 @@ Repository ini berisi kumpulan laporan dan jawaban Hands-On praktikum Sistem Ope
 
 **Hands-On 6 — Deadlock and Starvation:** Thread concurrency dan resource competition, simulasi deadlock, deadlock prevention via resource ordering, Dining Philosophers problem, dan blocking synchronization dengan semaphore.
 
-## Teknologi
-
-- **Bash scripting** — process management, file-based IPC, directory lock
-- **C dengan pthreads** — thread creation, mutex, semaphore, condition variable
-- **Linux/Unix environment** — GCC compiler, POSIX thread library
