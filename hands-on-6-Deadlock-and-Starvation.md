@@ -472,4 +472,4 @@ Keunggulan blocking dibanding busy-waiting: thread yang menunggu tidak mengonsum
 | 4 | Dining Philosophers | Masalah klasik yang menunjukkan sulitnya menghindari deadlock pada shared resources |
 | 5 | Producer-Consumer | Blocking synchronization dengan semaphore lebih efisien dari busy-waiting |
 
-Hands-on ini membangun pemahaman bertahap: dari mengamati concurrency dasar (Lab 1), mengalami deadlock secara langsung (Lab 2), belajar mencegahnya (Lab 3), melihat kompleksitasnya pada masalah klasik (Lab 4), hingga mengimplementasikan sinkronisasi yang efisien (Lab 5). Poin utama: deadlock terjadi ketika empat Coffman conditions terpenuhi bersamaan, dan cara paling praktis mencegahnya adalah mengeliminasi salah satu kondisi — biasanya circular wait melalui resource ordering.
+
